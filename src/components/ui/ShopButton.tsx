@@ -1,4 +1,3 @@
-// src/components/ShopButton.tsx
 import React, { memo } from "react";
 import {
     TouchableOpacity,
@@ -6,6 +5,7 @@ import {
     ActivityIndicator,
     ViewStyle,
     TextStyle,
+    StyleProp,
 } from "react-native";
 import Typography from "@components/ui/Typography";
 import { COLORS, SIZES } from "@constants/theme";
@@ -15,9 +15,9 @@ interface ShopButtonProps {
     onPress: () => void;
     isLoading?: boolean;
     disabled?: boolean;
-    style?: ViewStyle;
-    textStyle?: TextStyle;
-    accessibilityLabel?: string; // Tuỳ chọn — xem note Accessibility ở Phần 3.2 mục 3
+    style?: StyleProp<ViewStyle>;
+    textStyle?: StyleProp<TextStyle>;
+    accessibilityLabel?: string;
 }
 
 const ShopButton: React.FC<ShopButtonProps> = ({
@@ -35,7 +35,6 @@ const ShopButton: React.FC<ShopButtonProps> = ({
             onPress={onPress}
             disabled={disabled || isLoading}
             activeOpacity={0.8}
-            // Không truyền riêng thì mặc định lấy luôn `title` — màn hình đọc (VoiceOver/TalkBack) luôn có tên nút để đọc
             accessibilityLabel={accessibilityLabel ?? title}
             accessibilityRole="button"
         >

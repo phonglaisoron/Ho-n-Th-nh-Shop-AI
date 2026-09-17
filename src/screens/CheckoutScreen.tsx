@@ -7,6 +7,7 @@ import ShopButton from '@components/ShopButton';
 import { useCartStore, CartItem } from '@store/useCartStore';
 import { useOrderStore } from '@store/useOrderStore';
 import { COLORS, SIZES } from '@constants/theme';
+import { useTheme } from '@contexts/ThemeContext';
 
 const formatCurrency = (value: number) =>
     new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
@@ -21,7 +22,6 @@ interface CreateOrderResponse {
     status: 'PENDING';
 }
 
-// Ch.6: giả lập Server. Ch.9 Bước 9c: đổi thành axiosClient.post('/orders', { items, total })
 const createOrderLocal = async (_payload: CreateOrderPayload): Promise<CreateOrderResponse> => {
     await new Promise<void>((resolve) => setTimeout(() => resolve(), 1200));
     return { orderId: `ORD-${Date.now()}`, status: 'PENDING' };
@@ -35,6 +35,13 @@ const CheckoutScreen = () => {
     const totalPrice = useCartStore((state) => state.totalPrice());
     const clearCart = useCartStore((state) => state.clearCart);
     const addOrder = useOrderStore((s) => s.addOrder);
+    const { isDarkMode } = useTheme();
+
+    const dynamicBg = isDarkMode ? '#121212' : COLORS.background;
+    const dynamicCardBg = isDarkMode ? '#1E1E1E' : COLORS.surface;
+    const dynamicText = isDarkMode ? '#FFFFFF' : COLORS.text;
+    const dynamicSubText = isDarkMode ? '#A0A0A0' : COLORS.textLight;
+    const dynamicBorder = isDarkMode ? '#2E2E2E' : COLORS.border;
 
     const { mutate, isPending, isError, isSuccess, data } = useMutation({
         mutationFn: createOrderLocal,
@@ -59,28 +66,28 @@ const CheckoutScreen = () => {
 
     if (isSuccess) {
         return (
-            <SafeAreaView style={styles.safeArea}>
+            <SafeAreaView style={[styles.safeArea, { backgroundColor: dynamicBg }]}>
                 <View style={styles.center}>
                     <Text style={styles.successIcon}>✅</Text>
                     <Text style={styles.successText}>Đặt hàng thành công!</Text>
-                    <Text style={styles.orderDetailText}>Mã đơn: {data?.orderId}</Text>
-                    <Text style={styles.orderDetailText}>Trạng thái: PENDING (chờ thanh toán)</Text>
+                    <Text style={[styles.orderDetailText, { color: dynamicText }]}>Mã đơn: {data?.orderId}</Text>
+                    <Text style={[styles.orderDetailText, { color: dynamicSubText }]}>Trạng thái: PENDING (chờ thanh toán)</Text>
                 </View>
             </SafeAreaView>
         );
     }
 
     return (
-        <SafeAreaView style={styles.safeArea}>
-            <View style={styles.container}>
-                <Text style={styles.title}>Xác nhận đơn hàng</Text>
+        <SafeAreaView style={[styles.safeArea, { backgroundColor: dynamicBg }]}>
+            <View style={[styles.container, { backgroundColor: dynamicCardBg, borderRadius: SIZES.radius, borderWidth: 1, borderColor: dynamicBorder, margin: SIZES.padding }]}>
+                <Text style={[styles.title, { color: dynamicText }]}>Xác nhận đơn hàng</Text>
 
-                <View style={styles.summaryRow}>
-                    <Text style={styles.label}>Số lượng sản phẩm</Text>
-                    <Text style={styles.value}>{totalQuantity}</Text>
+                <View style={[styles.summaryRow, { borderBottomColor: dynamicBorder }]}>
+                    <Text style={[styles.label, { color: dynamicSubText }]}>Số lượng sản phẩm</Text>
+                    <Text style={[styles.value, { color: dynamicText }]}>{totalQuantity}</Text>
                 </View>
-                <View style={styles.summaryRow}>
-                    <Text style={styles.label}>Tổng cộng</Text>
+                <View style={[styles.summaryRow, { borderBottomColor: dynamicBorder }]}>
+                    <Text style={[styles.label, { color: dynamicSubText }]}>Tổng cộng</Text>
                     <Text style={styles.totalValue}>{formatCurrency(totalPrice)}</Text>
                 </View>
 
@@ -104,25 +111,24 @@ const CheckoutScreen = () => {
 };
 
 const styles = StyleSheet.create({
-    safeArea: { flex: 1, backgroundColor: COLORS.background },
-    container: { flex: 1, padding: SIZES.padding },
-    title: { fontSize: SIZES.h1, fontWeight: 'bold', color: COLORS.text, marginBottom: 24 },
+    safeArea: { flex: 1 },
+    container: { padding: SIZES.padding },
+    title: { fontSize: SIZES.h2, fontWeight: 'bold', marginBottom: 20 },
     summaryRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        paddingVertical: 12,
+        paddingVertical: 14,
         borderBottomWidth: 1,
-        borderBottomColor: COLORS.border,
     },
-    label: { fontSize: SIZES.body1, color: COLORS.textLight },
-    value: { fontSize: SIZES.body1, color: COLORS.text, fontWeight: '600' },
+    label: { fontSize: SIZES.body1 },
+    value: { fontSize: SIZES.body1, fontWeight: '600' },
     totalValue: { fontSize: SIZES.h2, color: COLORS.primary, fontWeight: 'bold' },
     confirmBtn: { marginTop: 32 },
     errorText: { color: COLORS.error, textAlign: 'center', marginTop: 16 },
     center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     successIcon: { fontSize: 60, marginBottom: 12 },
     successText: { fontSize: SIZES.h2, fontWeight: 'bold', color: COLORS.success, marginBottom: 8 },
-    orderDetailText: { fontSize: SIZES.body2, color: COLORS.text, marginTop: 4 },
+    orderDetailText: { fontSize: SIZES.body2, marginTop: 4 },
 });
 
 export default CheckoutScreen;

@@ -5,6 +5,7 @@ import ShopButton from '@components/ShopButton';
 import ShopInput from '@components/ui/ShopInput';
 import { COLORS, SIZES } from '@constants/theme';
 import { useAuthStore } from '@store/useAuthStore';
+import { useTheme } from '@contexts/ThemeContext';
 
 const LoginScreen = () => {
     const navigation = useNavigation<any>();
@@ -12,8 +13,12 @@ const LoginScreen = () => {
     const [password, setPassword] = useState('');
     const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
     const [loading, setLoading] = useState(false);
+    const { isDarkMode } = useTheme();
 
-    const login = useAuthStore(state => state.login);
+    const login = useAuthStore((state) => state.login);
+
+    const dynamicBg = isDarkMode ? '#121212' : COLORS.background;
+    const dynamicSubText = isDarkMode ? '#A0A0A0' : COLORS.textLight;
 
     const validate = () => {
         const next: { email?: string; password?: string } = {};
@@ -32,13 +37,20 @@ const LoginScreen = () => {
                 name: email.split('@')[0],
                 email: email.trim(),
             });
-        }, 1200);
+        }, 600);
+    };
+
+    const handleQuickLogin = () => {
+        login('mock_token_123', {
+            name: 'Nguyễn Văn A',
+            email: 'user@shopai.com',
+        });
     };
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: dynamicBg }]}>
             <Text style={styles.title}>ShopAI</Text>
-            <Text style={styles.subtitle}>Vui lòng đăng nhập để tiếp tục</Text>
+            <Text style={[styles.subtitle, { color: dynamicSubText }]}>Vui lòng đăng nhập để tiếp tục</Text>
 
             <ShopInput
                 label="Email"
@@ -65,8 +77,15 @@ const LoginScreen = () => {
                 style={styles.loginBtn}
             />
 
+            <ShopButton
+                title="⚡ Đăng nhập nhanh (Tài khoản mẫu)"
+                onPress={handleQuickLogin}
+                style={[styles.quickLoginBtn, { backgroundColor: isDarkMode ? '#1E1E1E' : '#FFF0F0' }]}
+                textStyle={{ color: COLORS.primary, fontSize: 13 }}
+            />
+
             <Pressable onPress={() => navigation.navigate('Register')} style={styles.registerLink}>
-                <Text style={styles.registerLinkText}>
+                <Text style={[styles.registerLinkText, { color: dynamicSubText }]}>
                     Chưa có tài khoản? <Text style={styles.registerLinkBold}>Đăng ký</Text>
                 </Text>
             </Pressable>
@@ -77,7 +96,6 @@ const LoginScreen = () => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: COLORS.background,
         justifyContent: 'center',
         padding: SIZES.padding,
     },
@@ -90,13 +108,19 @@ const styles = StyleSheet.create({
     },
     subtitle: {
         fontSize: SIZES.body1,
-        color: COLORS.textLight,
         textAlign: 'center',
         marginBottom: 32,
     },
     loginBtn: { marginTop: 8 },
+    quickLoginBtn: {
+        marginTop: 12,
+        borderWidth: 1,
+        borderColor: COLORS.primary,
+        shadowOpacity: 0,
+        elevation: 0,
+    },
     registerLink: { marginTop: 20, alignItems: 'center' },
-    registerLinkText: { fontSize: SIZES.body2, color: COLORS.textLight },
+    registerLinkText: { fontSize: SIZES.body2 },
     registerLinkBold: { color: COLORS.primary, fontWeight: '700' },
 });
 

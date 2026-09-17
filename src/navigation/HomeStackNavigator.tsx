@@ -2,6 +2,8 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import HomeScreen from '@screens/HomeScreen';
 import ProductDetailScreen from '@screens/ProductDetailScreen';
+import { useTheme } from '@contexts/ThemeContext';
+import { COLORS } from '@constants/theme';
 
 export type HomeStackParamList = {
     Home: undefined;
@@ -10,11 +12,22 @@ export type HomeStackParamList = {
 
 const Stack = createNativeStackNavigator<HomeStackParamList>();
 
-// KHÔNG còn nhận Props onLogout — HomeScreen tự lấy useAuthStore().logout
 const HomeStackNavigator = () => {
+    const { isDarkMode } = useTheme();
+
     return (
-        <Stack.Navigator>
-            {/* Dùng component= để Navigation tự tiêm navigation/route — xóa hẳn Render Prop onLogout của Chương 5 */}
+        <Stack.Navigator
+            screenOptions={{
+                headerStyle: {
+                    backgroundColor: isDarkMode ? '#1E1E1E' : COLORS.surface,
+                },
+                headerTintColor: isDarkMode ? '#FFFFFF' : COLORS.text,
+                headerTitleStyle: {
+                    color: isDarkMode ? '#FFFFFF' : COLORS.text,
+                    fontWeight: '700',
+                },
+            }}
+        >
             <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
             <Stack.Screen
                 name="ProductDetail"
