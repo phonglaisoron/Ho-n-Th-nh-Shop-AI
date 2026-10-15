@@ -35,7 +35,11 @@
 		<true/>
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string></string>
+	<string>ShopAI cần quyền vị trí để tính chính xác khoảng cách và phí giao hàng tới bạn.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>ShopAI cần quyền Camera để quét mã vạch và mã QR sản phẩm.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>ShopAI dùng Face ID để bảo vệ tài khoản và thông tin đơn hàng của bạn.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>

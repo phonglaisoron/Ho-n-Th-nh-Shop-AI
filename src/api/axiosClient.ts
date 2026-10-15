@@ -1,8 +1,9 @@
 import axios from 'axios';
+import { API_BASE_URL } from '@constants/api';
 import { useAuthStore } from '@store/useAuthStore';
 
 const axiosClient = axios.create({
-  baseURL: 'https://api.shopai.com', // Domain gốc — chỉ sửa 1 nơi duy nhất
+  baseURL: API_BASE_URL, // Địa chỉ máy chủ thật
   timeout: 10000,
   headers: { 'Content-Type': 'application/json' },
 });

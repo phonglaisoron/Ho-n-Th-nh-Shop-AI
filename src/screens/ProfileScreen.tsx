@@ -13,7 +13,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { COLORS, SIZES } from '@constants/theme';
+import LiquidBackground from '@components/ui/LiquidBackground';
+import { COLORS, SIZES, IOS26_COLORS, COSMIC_THEME } from '@constants/theme';
 import { useAuthStore, AddressItem } from '@store/useAuthStore';
 import { useOrderStore } from '@store/useOrderStore';
 import { useTheme } from '@contexts/ThemeContext';
@@ -54,12 +55,11 @@ const ProfileScreen = () => {
     // Checked in state
     const [hasCheckedInToday, setHasCheckedInToday] = useState(false);
 
-    // Dynamic colors
-    const dynamicBg = isDarkMode ? '#121212' : COLORS.background;
-    const dynamicCardBg = isDarkMode ? '#1E1E1E' : COLORS.surface;
-    const dynamicText = isDarkMode ? '#FFFFFF' : COLORS.text;
-    const dynamicSubText = isDarkMode ? '#A0A0A0' : COLORS.textLight;
-    const dynamicBorder = isDarkMode ? '#2E2E2E' : '#EEEEEE';
+    // Dynamic glass colors
+    const dynamicCardBg = isDarkMode ? 'rgba(12, 18, 46, 0.88)' : 'rgba(255, 255, 255, 0.90)';
+    const dynamicText = isDarkMode ? '#F8FAFC' : COLORS.text;
+    const dynamicSubText = isDarkMode ? '#94A3B8' : COLORS.textLight;
+    const dynamicBorder = isDarkMode ? 'rgba(0, 245, 212, 0.28)' : 'rgba(0, 0, 0, 0.08)';
 
     const pendingOrdersCount = orders.filter((o) => o.status === 'PENDING').length;
     const points = user?.points ?? 1250;
@@ -125,17 +125,18 @@ const ProfileScreen = () => {
     };
 
     return (
-        <SafeAreaView style={[styles.safeArea, { backgroundColor: dynamicBg }]} edges={['bottom']}>
-            <ScrollView
-                style={styles.scrollView}
-                contentContainerStyle={styles.scrollContent}
-                showsVerticalScrollIndicator={false}
-            >
+        <LiquidBackground>
+            <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+                <ScrollView
+                    style={styles.scrollView}
+                    contentContainerStyle={styles.scrollContent}
+                    showsVerticalScrollIndicator={false}
+                >
                 {/* 1. Header Người Dùng */}
                 <View style={[styles.profileHeaderCard, { backgroundColor: dynamicCardBg, borderColor: dynamicBorder }]}>
                     <View style={styles.headerTopRow}>
-                        <View style={[styles.avatarWrapper, { backgroundColor: isDarkMode ? '#2A2A2A' : '#FFF0F0' }]}>
-                            <Icon name="account" size={44} color={COLORS.primary} />
+                        <View style={[styles.avatarWrapper, { backgroundColor: isDarkMode ? 'rgba(0, 245, 212, 0.15)' : 'rgba(2, 132, 199, 0.12)' }]}>
+                            <Icon name="account" size={44} color={isDarkMode ? COSMIC_THEME.neonCyan : COLORS.primary} />
                         </View>
                         <View style={styles.userInfoCol}>
                             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -148,14 +149,14 @@ const ProfileScreen = () => {
                             <Text style={[styles.userPhoneText, { color: dynamicSubText }]}>📱 {user?.phone || '0987 654 321'}</Text>
                         </View>
                         <TouchableOpacity
-                            style={[styles.editProfileIconBtn, { backgroundColor: isDarkMode ? '#2C2C2C' : '#F5F5F5' }]}
+                            style={[styles.editProfileIconBtn, { backgroundColor: isDarkMode ? 'rgba(0, 245, 212, 0.15)' : 'rgba(2, 132, 199, 0.10)' }]}
                             onPress={() => {
                                 setEditName(user?.name || '');
                                 setEditPhone(user?.phone || '0987 654 321');
                                 setIsEditProfileVisible(true);
                             }}
                         >
-                            <Icon name="account-edit-outline" size={20} color={COLORS.primary} />
+                            <Icon name="account-edit-outline" size={20} color={isDarkMode ? COSMIC_THEME.neonCyan : COLORS.primary} />
                         </TouchableOpacity>
                     </View>
 
@@ -370,8 +371,8 @@ const ProfileScreen = () => {
                             <Text style={[styles.menuItemTitle, { color: dynamicText }]}>Kho Voucher & Ưu Đãi</Text>
                             <Text style={[styles.menuItemDesc, { color: dynamicSubText }]}>Giảm đến 50.000 ₫ & Freeship</Text>
                         </View>
-                        <View style={[styles.pillBadge, { backgroundColor: '#FF4D4F' }]}>
-                            <Text style={styles.pillBadgeText}>3 MỚI</Text>
+                        <View style={[styles.pillBadge, { backgroundColor: isDarkMode ? '#00F5D4' : '#0284C7' }]}>
+                            <Text style={[styles.pillBadgeText, { color: isDarkMode ? '#050716' : '#FFFFFF' }]}>3 MỚI</Text>
                         </View>
                         <Icon name="chevron-right" size={20} color={dynamicSubText} />
                     </TouchableOpacity>
@@ -751,6 +752,7 @@ const ProfileScreen = () => {
                 </View>
             </Modal>
         </SafeAreaView>
+        </LiquidBackground>
     );
 };
 

@@ -2,12 +2,14 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import HomeScreen from '@screens/HomeScreen';
 import ProductDetailScreen from '@screens/ProductDetailScreen';
+import ScannerScreen from '@screens/ScannerScreen';
 import { useTheme } from '@contexts/ThemeContext';
 import { COLORS } from '@constants/theme';
 
 export type HomeStackParamList = {
-    Home: undefined;
-    ProductDetail: { productId: string };
+    Home: { scannedCode?: string } | undefined;
+    ProductDetail: { productId: string; autoOpenQr?: boolean };
+    Scanner: undefined;
 };
 
 const Stack = createNativeStackNavigator<HomeStackParamList>();
@@ -32,7 +34,12 @@ const HomeStackNavigator = () => {
             <Stack.Screen
                 name="ProductDetail"
                 component={ProductDetailScreen}
-                options={{ title: 'Chi tiết sản phẩm' }}
+                options={{ headerShown: false }}
+            />
+            <Stack.Screen
+                name="Scanner"
+                component={ScannerScreen}
+                options={{ headerShown: false }}
             />
         </Stack.Navigator>
     );

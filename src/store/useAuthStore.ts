@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 
 export interface AddressItem {
     id: string;
@@ -42,25 +43,38 @@ const DEFAULT_ADDRESSES: AddressItem[] = [
 
 interface AuthState {
     token: string | null;
+    isLoading: boolean; // Trạng thái đang kiểm tra ổ cứng Keystore
+    isUnlocked: boolean; // Trạng thái mở khoá sinh trắc học
     user: UserInfo | null;
-    login: (newToken: string, userInfo?: Partial<UserInfo>) => void;
+    login: (newToken: string, userInfo?: Partial<UserInfo>) => Promise<void>;
+    logout: () => Promise<void>;
+    checkLocalToken: () => Promise<void>;
+    setIsUnlocked: (unlocked: boolean) => void;
     setUser: (userInfo: UserInfo) => void;
     updateProfile: (data: Partial<UserInfo>) => void;
     addPoints: (amount: number) => void;
     addAddress: (address: Omit<AddressItem, 'id'>) => void;
     setDefaultAddress: (id: string) => void;
     deleteAddress: (id: string) => void;
-    logout: () => void;
 }
 
 export const useAuthStore = create<AuthState>()(
     persist(
         (set, get) => ({
             token: null,
+            isLoading: true,
+            isUnlocked: false,
             user: null,
-            login: (newToken, userInfo) => {
+
+            login: async (newToken, userInfo) => {
+                try {
+                    await SecureStore.setItemAsync('SHOP_ACCESS_TOKEN', newToken);
+                } catch (e) {
+                    console.log('[SecureStore] Lỗi lưu token:', e);
+                }
                 set({
                     token: newToken,
+                    isUnlocked: true, // Vừa đăng nhập bằng mật khẩu -> mở cổng sinh trắc luôn
                     user: {
                         name: userInfo?.name || 'Người dùng ShopAI',
                         email: userInfo?.email || 'user@shopai.com',
@@ -71,6 +85,33 @@ export const useAuthStore = create<AuthState>()(
                     },
                 });
             },
+
+            logout: async () => {
+                try {
+                    await SecureStore.deleteItemAsync('SHOP_ACCESS_TOKEN');
+                } catch (e) {
+                    console.log('[SecureStore] Lỗi xoá token:', e);
+                }
+                set({ token: null, user: null, isUnlocked: false });
+            },
+
+            checkLocalToken: async () => {
+                try {
+                    const storedToken = await SecureStore.getItemAsync('SHOP_ACCESS_TOKEN');
+                    if (storedToken) {
+                        set({ token: storedToken, isUnlocked: false });
+                    } else {
+                        set({ token: null, isUnlocked: false });
+                    }
+                } catch (e) {
+                    console.log('[SecureStore] Lỗi đọc Keystore:', e);
+                    set({ token: null, isUnlocked: false });
+                } finally {
+                    set({ isLoading: false });
+                }
+            },
+
+            setIsUnlocked: (unlocked: boolean) => set({ isUnlocked: unlocked }),
             setUser: (userInfo) => set({ user: userInfo }),
             updateProfile: (data) =>
                 set((state) => ({
@@ -121,11 +162,14 @@ export const useAuthStore = create<AuthState>()(
                         },
                     };
                 }),
-            logout: () => set({ token: null, user: null }),
         }),
         {
             name: 'shopai-auth-storage',
             storage: createJSONStorage(() => AsyncStorage),
+            // CHỈ lưu thông tin người dùng vào AsyncStorage, TUYỆT ĐỐI KHÔNG lưu token vào AsyncStorage (Chống M9)
+            partialize: (state) => ({
+                user: state.user,
+            }),
         }
     )
 );

@@ -1,9 +1,7 @@
-import React from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context'; // BẮT BUỘC lấy từ safe-area-context, KHÔNG lấy từ 'react-native'
-import { useInfiniteQuery } from '@tanstack/react-query'; // Import vũ khí hạng nặng — có Pagination sẵn (Phần 6.8)
-// Danh sách vẫn nên dùng FlashList như Chương 4/5 (hiệu năng tốt hơn FlatList khi danh sách dài);
-// nếu dự án của bạn chưa cài @shopify/flash-list, có thể tạm giữ FlatList tương đương.
+import React, { useCallback, useEffect, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { FlashList } from '@shopify/flash-list';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { DrawerActions, type CompositeScreenProps } from '@react-navigation/native';
@@ -11,84 +9,94 @@ import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import ProductCard from '@components/ProductCard';
 import ShopButton from '@components/ShopButton';
-import { COLORS, SIZES } from '@constants/theme';
+import LocationBadge from '@components/LocationBadge';
+import LiquidBackground from '@components/ui/LiquidBackground';
+import { COLORS, SIZES, IOS26_COLORS, COSMIC_THEME } from '@constants/theme';
 import { useAuthStore } from '@store/useAuthStore';
 import { useCartStore } from '@store/useCartStore';
 import { useTheme } from '@contexts/ThemeContext';
+import { MOCK_PRODUCTS } from '@data/mockProducts';
+import { API_BASE_URL } from '@constants/api';
 import { Product, ProductListSchema } from '../types/product.schema';
+import { parseScannedProductCode } from '@utils/qrHelper';
 import type { HomeStackParamList } from '@navigation/HomeStackNavigator';
 import type { MainTabParamList } from '@navigation/MainTabNavigator';
+import type { RootStackParamList } from '@navigation/RootStackNavigator';
 
-// Vì Bước 5 đã đổi Stack.Screen("Home") sang dùng component=, HomeScreen giờ nhận
-// thẳng navigation/route qua Props chuẩn của React Navigation. Dùng CompositeScreenProps
-// (thay vì "any") vì HomeScreen cần navigate() cả trong Home Stack (ProductDetail) VÀ
-// nhảy sang Tab cha (Cart) — TypeScript sẽ bắt lỗi ngay nếu gọi sai tên/sai tham số ở 1 trong 2 tầng
 type Props = CompositeScreenProps<
     NativeStackScreenProps<HomeStackParamList, 'Home'>,
-    BottomTabScreenProps<MainTabParamList>
+    CompositeScreenProps<
+        BottomTabScreenProps<MainTabParamList>,
+        NativeStackScreenProps<RootStackParamList>
+    >
 >;
 
 const PAGE_SIZE = 10;
-const TOTAL_MOCK_PRODUCTS = 47; // Giả lập Server có 47 sản phẩm — đủ nhiều trang để thấy rõ Pagination
+const TOTAL_MOCK_PRODUCTS = MOCK_PRODUCTS.length;
 
-// Khuôn 1 "trang" dữ liệu trả về từ Server — đúng format REST phân trang thật (Chương 9 sẽ dùng lại y hệt)
+const SHOP_CATEGORIES = [
+    { id: 'all', name: '⚡ Tất cả' },
+    { id: 'phone', name: '📱 Điện thoại' },
+    { id: 'laptop', name: '💻 Laptop & PC' },
+    { id: 'audio', name: '🎧 Tai nghe & Loa' },
+    { id: 'watch', name: '⌚ Đồng hồ' },
+    { id: 'accessories', name: '🔌 Phụ kiện' },
+];
+
 interface ProductPage {
     items: Product[];
     nextPage: number | null;
 }
 
-// 2 lớp lỗi riêng biệt để UI phân biệt rạch ròi "lỗi mạng" và "lỗi dữ liệu bẩn (Zod)"
 class ZodValidationError extends Error { }
 class NetworkError extends Error { }
 
-// Hàm giả lập gọi API PHÂN TRANG — mỗi lần chỉ trả về đúng PAGE_SIZE sản phẩm, không tải hết 1 lượt
-const fetchProductsPage = async ({ pageParam }: { pageParam: number }): Promise<ProductPage> => {
-    return new Promise((resolve, reject) => {
-        setTimeout(() => {
-            // Giả lập ngẫu nhiên ~10% khả năng mất mạng — để thấy rõ nhánh lỗi Mạng khác nhánh lỗi Zod
-            if (Math.random() < 0.1) {
-                reject(new NetworkError('Mất kết nối mạng, vui lòng thử lại!'));
-                return;
-            }
+const API_URL = `${API_BASE_URL}/api/products`;
 
-            const start = (pageParam - 1) * PAGE_SIZE;
-            const rawItems = Array.from({ length: PAGE_SIZE })
-                .map((_, i) => {
-                    const index = start + i;
-                    if (index >= TOTAL_MOCK_PRODUCTS) return null; // Hết dữ liệu giả lập
-                    return {
-                        id: `api_prod_${index}`,
-                        name: `Sản phẩm từ Cloud ${index}`,
-                        price: 500000 + index * 5000,
-                        image: `https://picsum.photos/seed/shopai_prod_${index}/400/400`,
-                    };
-                })
-                .filter((item) => item !== null);
+const fetchProductsAPI = async (): Promise<Product[]> => {
+    const response = await fetch(API_URL);
+    if (!response.ok) {
+        throw new NetworkError('Lỗi mạng từ Server NestJS');
+    }
+    const rawData = await response.json(); // Dữ liệu thô — chưa hề được tin tưởng
 
-            // TRẠM KIỂM SOÁT ZOD: Kiểm tra riêng TỪNG TRANG trước khi cho phép đi tiếp
-            const result = ProductListSchema.safeParse(rawItems);
-            if (!result.success) {
-                console.error('❌ Zod chặn dữ liệu bẩn từ API:', result.error.format());
-                reject(new ZodValidationError('Dữ liệu sản phẩm không hợp lệ (Zod validation failed)!'));
-                return;
-            }
+    // TRẠM KIỂM SOÁT ZOD: không vì Server là "hàng nhà mình" mà bỏ qua bước kiểm duyệt này
+    const result = ProductListSchema.safeParse(rawData);
+    if (!result.success) {
+        console.error('❌ Zod chặn dữ liệu bẩn từ Server NestJS:', result.error.format());
+        throw new ZodValidationError('Dữ liệu sản phẩm từ Server không hợp lệ (Zod validation failed)!');
+    }
 
-            const hasMore = start + PAGE_SIZE < TOTAL_MOCK_PRODUCTS;
-            resolve({ items: result.data, nextPage: hasMore ? pageParam + 1 : null });
-        }, 1200);
-    });
+    return result.data;
 };
 
-const HomeScreen = ({ navigation }: Props) => {
-    const logout = useAuthStore(state => state.logout); // Gọi Hàm thoát từ Đám mây
-    const totalQuantity = useCartStore(state => state.totalQuantity()); // Số lượng hàng trong giỏ
-    const { isDarkMode, toggleTheme } = useTheme(); // Bắt sóng chuyển đổi Sáng/Tối từ ThemeContext
+const fetchProductsPage = async ({ pageParam }: { pageParam: number }): Promise<ProductPage> => {
+    const all = await fetchProductsAPI();
+    const start = (pageParam - 1) * PAGE_SIZE;
+    const items = all.slice(start, start + PAGE_SIZE);
+    const hasMore = start + PAGE_SIZE < all.length;
+    return { items, nextPage: hasMore ? pageParam + 1 : null };
+};
 
-    const dynamicBg = isDarkMode ? '#121212' : COLORS.background;
-    const dynamicSurface = isDarkMode ? '#1E1E1E' : COLORS.surface;
-    const dynamicText = isDarkMode ? '#FFFFFF' : COLORS.text;
+const HomeScreen = ({ navigation, route }: Props) => {
+    const scannedCode = route?.params?.scannedCode;
+    const logout = useAuthStore(state => state.logout);
+    const totalQuantity = useCartStore(state => state.totalQuantity());
+    const { isDarkMode, toggleTheme } = useTheme();
+    const [selectedCategory, setSelectedCategory] = useState('all');
 
-    // BÙM! useInfiniteQuery = toàn bộ sức mạnh Cache/StaleTime (Phần 6.5) CỘNG THÊM Pagination tự động (Phần 6.8)
+    const dynamicText = isDarkMode ? '#F8FAFC' : '#0F172A';
+
+    // Tự động điều hướng đến chi tiết sản phẩm nếu nhận mã quét từ camera
+    useEffect(() => {
+        if (scannedCode) {
+            const pid = parseScannedProductCode(scannedCode);
+            if (pid) {
+                navigation.navigate('ProductDetail', { productId: pid });
+            }
+        }
+    }, [scannedCode, navigation]);
+
     const {
         data,
         isLoading,
@@ -96,120 +104,545 @@ const HomeScreen = ({ navigation }: Props) => {
         error,
         refetch,
         isRefetching,
-        fetchNextPage,     // Gọi hàm này để tải thêm trang kế tiếp
-        hasNextPage,       // Server còn trang để tải hay không
-        isFetchingNextPage, // Đang tải trang kế tiếp (khác isLoading — đã có data cũ hiển thị)
+        fetchNextPage,
+        hasNextPage,
+        isFetchingNextPage,
     } = useInfiniteQuery({
-        queryKey: ['productsInfinite'], // Mã định danh Cache — đổi tên so với 'productsList' vì cấu trúc data đã khác (nhiều trang)
+        queryKey: ['productsInfinite'],
         queryFn: fetchProductsPage,
         initialPageParam: 1,
         getNextPageParam: (lastPage) => lastPage.nextPage,
     });
 
-    // data.pages là mảng CÁC TRANG — "làm phẳng" (flatten) lại thành 1 mảng sản phẩm duy nhất cho FlashList
     const allProducts = data?.pages.flatMap((page) => page.items) ?? [];
+    const displayedProducts = selectedCategory === 'all'
+        ? allProducts
+        : allProducts.filter((item) => item.category === selectedCategory);
 
-    // Phân biệt rõ 2 thông báo lỗi khác nhau bằng instanceof — đúng yêu cầu UX (không gộp chung 1 câu mơ hồ)
     const errorMessage =
         error instanceof ZodValidationError
-            ? '⚠️ Dữ liệu sản phẩm không hợp lệ (lỗi kiểm tra Zod) — báo kỹ thuật viên!'
-            : '📡 Lỗi mạng — vui lòng kiểm tra kết nối và kéo xuống thử lại!';
+            ? '⚠️ Dữ liệu sản phẩm không đúng định dạng!'
+            : '📡 Không thể kết nối máy chủ — vui lòng kéo xuống để thử lại!';
+
+    const renderProductItem = useCallback(
+        ({ item }: { item: Product }) => (
+            <ProductCard
+                product={item}
+                onPress={() => navigation.navigate('ProductDetail', { productId: item.id })}
+            />
+        ),
+        [navigation]
+    );
+
+    const keyExtractor = useCallback((item: Product) => item.id, []);
 
     return (
-        <SafeAreaView style={[styles.safeArea, { backgroundColor: dynamicBg }]}>
-            <View style={[styles.container, { backgroundColor: dynamicBg }]}>
-                <View style={[styles.header, { backgroundColor: dynamicSurface }]}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                        <Pressable
-                            onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
-                            style={{ padding: 4 }}
+        <LiquidBackground>
+            <SafeAreaView style={styles.safeArea}>
+                <View style={styles.container}>
+                    {/* Sci-Fi Space Station Header */}
+                    <View style={styles.headerWrapper}>
+                        <View
+                            style={[
+                                styles.headerBar,
+                                {
+                                    backgroundColor: isDarkMode
+                                        ? 'rgba(10, 16, 42, 0.88)'
+                                        : 'rgba(255, 255, 255, 0.90)',
+                                    borderColor: isDarkMode
+                                        ? 'rgba(0, 245, 212, 0.35)'
+                                        : 'rgba(255, 255, 255, 0.90)',
+                                },
+                            ]}
                         >
-                            <Icon name="menu" size={28} color={dynamicText} />
-                        </Pressable>
-                        <Text style={[styles.headerTitle, { color: dynamicText }]}>ShopAI</Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                <Pressable
+                                    onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
+                                    style={[
+                                        styles.glassActionBtn,
+                                        {
+                                            backgroundColor: isDarkMode
+                                                ? 'rgba(0, 245, 212, 0.12)'
+                                                : 'rgba(0, 0, 0, 0.04)',
+                                            borderColor: isDarkMode ? 'rgba(0, 245, 212, 0.30)' : 'transparent',
+                                            borderWidth: 1,
+                                        },
+                                    ]}
+                                >
+                                    <Icon
+                                        name="menu"
+                                        size={20}
+                                        color={isDarkMode ? COSMIC_THEME.neonCyan : dynamicText}
+                                    />
+                                </Pressable>
+                                <View>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                        <Text style={[styles.headerTitle, { color: dynamicText }]}>
+                                            Shop<Text style={{ color: COSMIC_THEME.neonCyan }}>AI</Text>
+                                        </Text>
+                                        <View style={styles.stationBadge}>
+                                            <Text style={styles.stationText}>CHÍNH HÃNG</Text>
+                                        </View>
+                                    </View>
+                                </View>
+                            </View>
+
+                            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                                {/* Tư vấn AI Gemini */}
+                                <Pressable
+                                    onPress={() => navigation.navigate('AIChat')}
+                                    style={[
+                                        styles.glassActionBtn,
+                                        {
+                                            backgroundColor: isDarkMode
+                                                ? 'rgba(0, 245, 212, 0.20)'
+                                                : 'rgba(2, 132, 199, 0.10)',
+                                            borderColor: isDarkMode ? IOS26_COLORS.quantumCyan : COLORS.primary,
+                                            borderWidth: 1.2,
+                                        },
+                                    ]}
+                                >
+                                    <Icon
+                                        name="robot-outline"
+                                        size={19}
+                                        color={isDarkMode ? IOS26_COLORS.quantumCyan : COLORS.primary}
+                                    />
+                                </Pressable>
+
+                                {/* Quét mã vạch / QR sản phẩm */}
+                                <Pressable
+                                    onPress={() => navigation.navigate('Scanner')}
+                                    style={[
+                                        styles.glassActionBtn,
+                                        {
+                                            backgroundColor: isDarkMode
+                                                ? 'rgba(0, 245, 212, 0.15)'
+                                                : 'rgba(0, 0, 0, 0.04)',
+                                            borderColor: isDarkMode ? 'rgba(0, 245, 212, 0.40)' : 'transparent',
+                                            borderWidth: 1,
+                                        },
+                                    ]}
+                                >
+                                    <Icon
+                                        name="barcode-scan"
+                                        size={19}
+                                        color={isDarkMode ? COSMIC_THEME.neonCyan : '#0284C7'}
+                                    />
+                                </Pressable>
+
+                                {/* Chuyển giao diện Sáng / Tối */}
+                                <Pressable
+                                    onPress={toggleTheme}
+                                    style={[
+                                        styles.glassActionBtn,
+                                        {
+                                            backgroundColor: isDarkMode
+                                                ? 'rgba(147, 51, 234, 0.20)'
+                                                : 'rgba(0, 0, 0, 0.04)',
+                                            borderColor: isDarkMode ? 'rgba(147, 51, 234, 0.40)' : 'transparent',
+                                            borderWidth: 1,
+                                        },
+                                    ]}
+                                >
+                                    <Text style={{ fontSize: 14 }}>{isDarkMode ? '☀️' : '🌙'}</Text>
+                                </Pressable>
+
+                                {/* Nút Giỏ hàng với số lượng */}
+                                <Pressable
+                                    onPress={() => navigation.navigate('Cart')}
+                                    style={[
+                                        styles.glassActionBtn,
+                                        {
+                                            backgroundColor: isDarkMode
+                                                ? 'rgba(0, 245, 212, 0.15)'
+                                                : 'rgba(2, 132, 199, 0.08)',
+                                            borderColor: isDarkMode ? 'rgba(0, 245, 212, 0.40)' : 'transparent',
+                                            borderWidth: 1,
+                                        },
+                                    ]}
+                                >
+                                    <Icon
+                                        name="cart-outline"
+                                        size={20}
+                                        color={isDarkMode ? COSMIC_THEME.neonCyan : '#0284C7'}
+                                    />
+                                    {totalQuantity > 0 && (
+                                        <View
+                                            style={[
+                                                styles.cartBadge,
+                                                { backgroundColor: isDarkMode ? '#00F5D4' : '#0284C7' },
+                                            ]}
+                                        >
+                                            <Text
+                                                style={[
+                                                    styles.cartBadgeText,
+                                                    { color: isDarkMode ? '#050716' : '#FFFFFF' },
+                                                ]}
+                                            >
+                                                {totalQuantity > 99 ? '99+' : totalQuantity}
+                                            </Text>
+                                        </View>
+                                    )}
+                                </Pressable>
+
+                                {/* Nút Đăng xuất */}
+                                <Pressable
+                                    onPress={logout}
+                                    style={[
+                                        styles.glassActionBtn,
+                                        {
+                                            backgroundColor: isDarkMode
+                                                ? 'rgba(239, 68, 68, 0.15)'
+                                                : 'rgba(239, 68, 68, 0.08)',
+                                            borderColor: isDarkMode ? 'rgba(239, 68, 68, 0.40)' : 'transparent',
+                                            borderWidth: 1,
+                                        },
+                                    ]}
+                                >
+                                    <Icon
+                                        name="logout-variant"
+                                        size={18}
+                                        color={isDarkMode ? '#F87171' : '#EF4444'}
+                                    />
+                                </Pressable>
+                            </View>
+                        </View>
                     </View>
-                    <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
-                        <Pressable
-                            onPress={toggleTheme}
-                            style={{
-                                paddingHorizontal: 8,
-                                paddingVertical: 6,
-                                borderRadius: 8,
-                                backgroundColor: isDarkMode ? '#333333' : '#EEEEEE',
-                            }}
+
+                    {/* Thẻ vị trí giao hàng */}
+                    <LocationBadge />
+
+                    {/* Banner Tư vấn AI Gemini 2026 */}
+                    <Pressable
+                        onPress={() => navigation.navigate('AIChat')}
+                        style={[
+                            styles.aiBanner,
+                            {
+                                backgroundColor: isDarkMode
+                                    ? 'rgba(0, 245, 212, 0.10)'
+                                    : 'rgba(2, 132, 199, 0.08)',
+                                borderColor: isDarkMode
+                                    ? 'rgba(0, 245, 212, 0.35)'
+                                    : 'rgba(2, 132, 199, 0.25)',
+                            },
+                        ]}
+                    >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                            <Text style={{ fontSize: 24 }}>🤖</Text>
+                            <View style={{ flex: 1 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                    <Text style={[styles.aiBannerTitle, { color: dynamicText }]}>
+                                        Trợ lý tư vấn AI Gemini
+                                    </Text>
+                                    <View style={styles.aiNewBadge}>
+                                        <Text style={styles.aiNewBadgeText}>AI 2026</Text>
+                                    </View>
+                                </View>
+                                <Text
+                                    style={[
+                                        styles.aiBannerSubtitle,
+                                        { color: isDarkMode ? '#94A3B8' : '#64748B' },
+                                    ]}
+                                    numberOfLines={1}
+                                >
+                                    Hỏi giá, so sánh cấu hình & giải đáp ngay
+                                </Text>
+                            </View>
+                        </View>
+                        <View
+                            style={[
+                                styles.aiBannerBtn,
+                                {
+                                    backgroundColor: isDarkMode
+                                        ? IOS26_COLORS.quantumCyan
+                                        : COLORS.primary,
+                                },
+                            ]}
                         >
-                            <Text style={{ fontSize: 13, color: dynamicText }}>{isDarkMode ? '☀️' : '🌙'}</Text>
-                        </Pressable>
-                        <ShopButton
-                            title={`Giỏ (${totalQuantity})`}
-                            onPress={() => navigation.navigate('Cart')}
-                            style={{ width: 85, height: 32, backgroundColor: COLORS.secondary }}
-                            textStyle={{ fontSize: 11 }}
+                            <Text
+                                style={[
+                                    styles.aiBannerBtnText,
+                                    { color: isDarkMode ? '#050716' : '#FFFFFF' },
+                                ]}
+                            >
+                                Hỏi ngay
+                            </Text>
+                        </View>
+                    </Pressable>
+
+                    {/* Thanh danh mục sản phẩm */}
+                    <View style={styles.categoriesWrapper}>
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.categoriesList}
+                        >
+                            {SHOP_CATEGORIES.map((cat) => {
+                                const active = selectedCategory === cat.id;
+                                return (
+                                    <Pressable
+                                        key={cat.id}
+                                        onPress={() => setSelectedCategory(cat.id)}
+                                        style={[
+                                            styles.catChip,
+                                            active
+                                                ? isDarkMode
+                                                    ? styles.catChipActiveDark
+                                                    : styles.catChipActiveLight
+                                                : isDarkMode
+                                                    ? styles.catChipInactiveDark
+                                                    : styles.catChipInactiveLight,
+                                        ]}
+                                    >
+                                        <Text
+                                            style={[
+                                                styles.catChipText,
+                                                active
+                                                    ? isDarkMode
+                                                        ? styles.catChipTextActiveDark
+                                                        : styles.catChipTextActiveLight
+                                                    : isDarkMode
+                                                        ? styles.catChipTextInactiveDark
+                                                        : styles.catChipTextInactiveLight,
+                                            ]}
+                                        >
+                                            {cat.name}
+                                        </Text>
+                                    </Pressable>
+                                );
+                            })}
+                        </ScrollView>
+                    </View>
+
+                    {/* Báo cáo nếu quét mã vạch thành công */}
+                    {scannedCode && (
+                        <View style={styles.scannedBanner}>
+                            <Text style={styles.scannedText}>📦 Đã quét mã sản phẩm: {scannedCode}</Text>
+                        </View>
+                    )}
+
+                    {/* UI Loading */}
+                    {isLoading && (
+                        <ActivityIndicator
+                            size="large"
+                            color={isDarkMode ? COSMIC_THEME.neonCyan : '#0284C7'}
+                            style={{ marginTop: 50 }}
                         />
-                        <ShopButton title="Thoát" onPress={logout} style={{ width: 65, height: 32 }} textStyle={{ fontSize: 11 }} />
-                    </View>
+                    )}
+
+                    {/* Lỗi */}
+                    {isError && (
+                        <Text style={{ textAlign: 'center', marginTop: 50, color: COLORS.error, paddingHorizontal: 20 }}>
+                            {errorMessage}
+                        </Text>
+                    )}
+
+                    {/* Danh sách sản phẩm */}
+                    {displayedProducts.length > 0 && (
+                        <FlashList
+                            data={displayedProducts}
+                            keyExtractor={keyExtractor}
+                            renderItem={renderProductItem}
+                            numColumns={2}
+                            contentContainerStyle={{ padding: SIZES.padding, paddingBottom: 110 }}
+                            refreshing={isRefetching}
+                            onRefresh={refetch}
+                            onEndReached={() => {
+                                if (hasNextPage && !isFetchingNextPage) fetchNextPage();
+                            }}
+                            onEndReachedThreshold={0.5}
+                            ListFooterComponent={
+                                isFetchingNextPage ? (
+                                    <ActivityIndicator
+                                        size="small"
+                                        color={isDarkMode ? COSMIC_THEME.neonCyan : '#0284C7'}
+                                        style={{ marginVertical: 16 }}
+                                    />
+                                ) : null
+                            }
+                        />
+                    )}
                 </View>
-
-                {/* Xử lý UI 3 trạng thái cực thanh lịch */}
-                {isLoading && <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 50 }} />}
-
-                {/* Lỗi Zod và lỗi Mạng dùng CHUNG 1 cờ isError nhưng hiện 2 THÔNG ĐIỆP khác nhau (errorMessage ở trên) */}
-                {isError && <Text style={{ textAlign: 'center', marginTop: 50, color: 'red' }}>{errorMessage}</Text>}
-
-                {allProducts.length > 0 && (
-                    <FlashList
-                        data={allProducts}
-                        keyExtractor={(item) => item.id}
-                        renderItem={({ item }) => (
-                            // Bọc Pressable để bấm vào Card mở ProductDetail — chỉ gửi productId (Route Params),
-                            // KHÔNG gửi nguyên Object sản phẩm (đúng nguyên tắc Chương 5, Phần 5.3).
-                            // Nút "Mua ngay" nằm bên TRONG ProductCard (Bước 7) vẫn hoạt động độc lập —
-                            // nó tự bắt Touch trước, không bị Pressable ngoài này "cướp" sự kiện.
-                            <Pressable onPress={() => navigation.navigate('ProductDetail', { productId: item.id })}>
-                                <ProductCard product={item} />
-                            </Pressable>
-                        )}
-                        numColumns={2}
-                        contentContainerStyle={{ padding: SIZES.padding }}
-                        refreshing={isRefetching} // Không cần tự quản lý useState nữa — React Query có sẵn cờ này
-                        onRefresh={refetch}       // Kéo tay xuống -> gọi lại trang 1, tự động cập nhật Cache
-                        // PHÂN TRANG THẬT: cuộn gần tới cuối danh sách -> tự động tải thêm trang kế tiếp
-                        onEndReached={() => {
-                            if (hasNextPage && !isFetchingNextPage) fetchNextPage();
-                        }}
-                        onEndReachedThreshold={0.5} // Kích hoạt khi còn cách đáy 50% chiều cao màn hình
-                        ListFooterComponent={
-                            isFetchingNextPage ? (
-                                <ActivityIndicator size="small" color={COLORS.primary} style={{ marginVertical: 16 }} />
-                            ) : null
-                        }
-                    />
-                )}
-            </View>
-        </SafeAreaView>
+            </SafeAreaView>
+        </LiquidBackground>
     );
 };
 
 const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
-        backgroundColor: COLORS.background,
     },
     container: {
         flex: 1,
     },
-    header: {
+    headerWrapper: {
         paddingHorizontal: SIZES.padding,
-        paddingVertical: 15,
-        backgroundColor: COLORS.surface,
+        paddingTop: 8,
+        paddingBottom: 4,
+    },
+    headerBar: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderRadius: SIZES.radiusLg,
+        borderWidth: 1.4,
+        shadowColor: '#00F5D4',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.18,
+        shadowRadius: 16,
+        elevation: 8,
     },
     headerTitle: {
         fontSize: SIZES.h2,
+        fontWeight: '900',
+        letterSpacing: -0.3,
+    },
+    stationBadge: {
+        backgroundColor: 'rgba(0, 245, 212, 0.18)',
+        borderColor: 'rgba(0, 245, 212, 0.45)',
+        borderWidth: 1,
+        borderRadius: 8,
+        paddingHorizontal: 5,
+        paddingVertical: 1,
+    },
+    stationText: {
+        color: '#00F5D4',
+        fontSize: 9,
+        fontWeight: '900',
+        letterSpacing: 0.6,
+    },
+    glassActionBtn: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative',
+    },
+    cartBadge: {
+        position: 'absolute',
+        top: -3,
+        right: -3,
+        backgroundColor: '#0284C7',
+        minWidth: 16,
+        height: 16,
+        borderRadius: 8,
+        paddingHorizontal: 3,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1.5,
+        borderColor: '#FFFFFF',
+    },
+    cartBadgeText: {
+        color: '#FFFFFF',
+        fontSize: 9,
+        fontWeight: '900',
+    },
+    categoriesWrapper: {
+        marginVertical: 6,
+    },
+    categoriesList: {
+        paddingHorizontal: SIZES.padding,
+        gap: 8,
+    },
+    catChip: {
+        paddingHorizontal: 14,
+        paddingVertical: 7,
+        borderRadius: 16,
+        borderWidth: 1,
+    },
+    catChipActiveDark: {
+        backgroundColor: 'rgba(0, 245, 212, 0.20)',
+        borderColor: '#00F5D4',
+        shadowColor: '#00F5D4',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.6,
+        shadowRadius: 6,
+    },
+    catChipActiveLight: {
+        backgroundColor: '#0284C7',
+        borderColor: '#0284C7',
+    },
+    catChipInactiveDark: {
+        backgroundColor: 'rgba(10, 16, 42, 0.70)',
+        borderColor: 'rgba(255, 255, 255, 0.12)',
+    },
+    catChipInactiveLight: {
+        backgroundColor: 'rgba(255, 255, 255, 0.85)',
+        borderColor: 'rgba(0, 0, 0, 0.08)',
+    },
+    catChipText: {
+        fontSize: 11,
+        fontWeight: '700',
+    },
+    catChipTextActiveDark: {
+        color: '#00F5D4',
+    },
+    catChipTextActiveLight: {
+        color: '#FFFFFF',
+    },
+    catChipTextInactiveDark: {
+        color: '#94A3B8',
+    },
+    catChipTextInactiveLight: {
+        color: '#64748B',
+    },
+    scannedBanner: {
+        backgroundColor: 'rgba(0, 245, 212, 0.15)',
+        borderWidth: 1,
+        borderColor: 'rgba(0, 245, 212, 0.40)',
+        borderRadius: SIZES.radius,
+        marginHorizontal: SIZES.padding,
+        padding: 10,
+        alignItems: 'center',
+        marginVertical: 6,
+    },
+    scannedText: {
         fontWeight: 'bold',
-        color: COLORS.text,
+        color: '#00F5D4',
+    },
+    aiBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginHorizontal: 16,
+        marginTop: 6,
+        marginBottom: 8,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderRadius: 16,
+        borderWidth: 1.2,
+    },
+    aiBannerTitle: {
+        fontSize: 13,
+        fontWeight: '800',
+    },
+    aiBannerSubtitle: {
+        fontSize: 11,
+        marginTop: 2,
+    },
+    aiNewBadge: {
+        backgroundColor: 'rgba(0, 245, 212, 0.20)',
+        paddingHorizontal: 5,
+        paddingVertical: 1,
+        borderRadius: 6,
+    },
+    aiNewBadgeText: {
+        fontSize: 9,
+        fontWeight: '900',
+        color: '#00F5D4',
+    },
+    aiBannerBtn: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 12,
+        marginLeft: 8,
+    },
+    aiBannerBtnText: {
+        fontSize: 11,
+        fontWeight: '800',
     },
 });
 

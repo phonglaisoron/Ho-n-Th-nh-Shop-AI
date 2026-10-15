@@ -5,6 +5,9 @@ import CheckoutScreen from '@screens/CheckoutScreen';
 import OrderDetailScreen from '@screens/OrderDetailScreen';
 import SettingsScreen from '@screens/SettingsScreen';
 import OrdersScreen from '@screens/OrdersScreen';
+import ScannerScreen from '@screens/ScannerScreen';
+import ProductDetailScreen from '@screens/ProductDetailScreen';
+import AIChatScreen from '@screens/AIChatScreen';
 import { COLORS } from '@constants/theme';
 import { useTheme } from '@contexts/ThemeContext';
 
@@ -14,6 +17,9 @@ export type RootStackParamList = {
     OrderDetail: { orderId: string };
     Settings: undefined;
     Orders: undefined;
+    Scanner: undefined;
+    ProductDetail: { productId: string; autoOpenQr?: boolean };
+    AIChat: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -26,12 +32,12 @@ const RootStackNavigator = () => {
             screenOptions={{
                 headerShown: false,
                 headerStyle: {
-                    backgroundColor: isDarkMode ? '#1E1E1E' : COLORS.surface,
+                    backgroundColor: isDarkMode ? '#131625' : '#FFFFFF',
                 },
-                headerTintColor: isDarkMode ? '#FFFFFF' : COLORS.primary,
+                headerTintColor: isDarkMode ? '#00F5D4' : COLORS.primary,
                 headerTitleStyle: {
-                    color: isDarkMode ? '#FFFFFF' : COLORS.text,
-                    fontWeight: '700',
+                    color: isDarkMode ? '#F8FAFC' : COLORS.text,
+                    fontWeight: '800',
                 },
             }}
         >
@@ -67,6 +73,27 @@ const RootStackNavigator = () => {
                 options={{
                     headerShown: true,
                     title: 'Cài đặt',
+                }}
+            />
+            <Stack.Screen
+                name="Scanner"
+                component={ScannerScreen}
+                options={{
+                    headerShown: false,
+                }}
+            />
+            <Stack.Screen
+                name="ProductDetail"
+                component={ProductDetailScreen}
+                options={{
+                    headerShown: false,
+                }}
+            />
+            <Stack.Screen
+                name="AIChat"
+                component={AIChatScreen}
+                options={{
+                    headerShown: false,
                 }}
             />
         </Stack.Navigator>

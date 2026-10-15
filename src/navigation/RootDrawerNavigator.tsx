@@ -1,8 +1,8 @@
 import React from "react";
 import { createDrawerNavigator } from "@react-navigation/drawer";
-import Icon from "react-native-vector-icons/MaterialCommunityIcons";
 import MainTabNavigator from "@navigation/MainTabNavigator";
 import ProfileScreen from "@screens/ProfileScreen";
+import CustomDrawerContent from "@components/CustomDrawerContent";
 import { COLORS } from "@constants/theme";
 import { useTheme } from "@contexts/ThemeContext";
 
@@ -18,32 +18,22 @@ const RootDrawerNavigator = () => {
 
     return (
         <Drawer.Navigator
+            drawerContent={(props) => <CustomDrawerContent {...props} />}
             screenOptions={{
                 headerShown: false,
-                headerStyle: {
-                    backgroundColor: isDarkMode ? '#1E1E1E' : COLORS.surface,
-                    elevation: 0,
-                    shadowOpacity: 0,
-                },
-                headerTintColor: isDarkMode ? '#FFFFFF' : COLORS.text,
-                headerTitleStyle: {
-                    fontWeight: '700',
-                },
+                drawerType: "front",
                 drawerStyle: {
-                    backgroundColor: isDarkMode ? '#1E1E1E' : COLORS.surface,
+                    width: "82%",
+                    backgroundColor: isDarkMode ? "#0A0E23" : "#FFFFFF",
                 },
-                drawerActiveTintColor: COLORS.primary,
-                drawerInactiveTintColor: isDarkMode ? '#BBBBBB' : COLORS.text,
+                overlayColor: isDarkMode ? "rgba(0, 0, 0, 0.7)" : "rgba(0, 0, 0, 0.4)",
             }}
         >
             <Drawer.Screen
                 name="ShopAI"
                 component={MainTabNavigator}
                 options={{
-                    title: "ShopAI",
-                    drawerIcon: ({ color, size }) => (
-                        <Icon name="storefront-outline" color={color} size={size} />
-                    ),
+                    title: "Cửa hàng ShopAI",
                 }}
             />
             <Drawer.Screen
@@ -52,10 +42,14 @@ const RootDrawerNavigator = () => {
                 options={{
                     title: "Hồ sơ của tôi",
                     headerShown: true,
-                    headerTitle: "Hồ sơ",
-                    drawerIcon: ({ color, size }) => (
-                        <Icon name="account-outline" color={color} size={size} />
-                    ),
+                    headerTitle: "Hồ sơ cá nhân",
+                    headerStyle: {
+                        backgroundColor: isDarkMode ? "#131625" : "#FFFFFF",
+                    },
+                    headerTintColor: isDarkMode ? "#FFFFFF" : COLORS.text,
+                    headerTitleStyle: {
+                        fontWeight: "700",
+                    },
                 }}
             />
         </Drawer.Navigator>
