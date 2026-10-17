@@ -8,3 +8,6 @@
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
 # Add any project specific keep options here:
+-keepattributes SourceFile,LineNumberTable   # Không có dòng này, báo cáo lỗi sẽ MẤT số dòng
+-keep public class * extends java.lang.Exception
+-keep class com.google.firebase.** { *; }

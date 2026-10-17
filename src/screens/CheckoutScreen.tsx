@@ -19,11 +19,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import jsQR from 'jsqr';
+import { scanNitroImage } from '@utils/qrScannerEngine';
 
 import { useCartStore, CartItem } from '@store/useCartStore';
 import { useOrderStore, ShippingAddress, BankPaymentInfo } from '@store/useOrderStore';
 import { useQueryClient } from '@tanstack/react-query';
 import axiosClient from '@api/axiosClient';
+import { getCrashlytics as crashlytics } from '@react-native-firebase/crashlytics';
+import { APP_ENV, API_BASE_URL } from '@constants/env';
 import LiquidBackground from '@components/ui/LiquidBackground';
 import LiquidGlassView from '@components/ui/LiquidGlassView';
 import ShopButton from '@components/ShopButton';
@@ -167,7 +170,7 @@ const DEFAULT_BANK_INFO: BankPaymentInfo = {
     verified: true,
 };
 
-// Component Camera Quét mã QR phụ trách chụp từng khung hình và phân tích qua jsQR
+// Component Camera Quét mã QR phụ trách chụp từng khung hình và phân tích qua bộ engine chuẩn ngân hàng
 const QrCameraStream = ({
     onScanSuccess,
     torchOn,
@@ -179,90 +182,118 @@ const QrCameraStream = ({
     const backDevice = useCameraDevice('back');
     const frontDevice = useCameraDevice('front');
     const device = backDevice || frontDevice;
+    const cameraRef = useRef<any>(null);
     const isScanningRef = useRef(false);
     const isProcessingRef = useRef(false);
 
+    const photoConfig = React.useMemo(() => ({
+        targetResolution: { width: 1280, height: 960 },
+        quality: 0.85,
+        qualityPrioritization: (device?.supportsSpeedQualityPrioritization ? 'speed' : 'balanced') as any,
+    }), [device]);
+
     const photoOutput = usePhotoOutput
-        ? usePhotoOutput({
-              targetResolution: { width: 1280, height: 960 },
-              quality: 0.8,
-          })
+        ? usePhotoOutput(photoConfig)
         : null;
 
-    const scanCurrentFrame = useCallback(async () => {
-        if (!photoOutput || isScanningRef.current || isProcessingRef.current) return;
+    const scanCurrentFrame = useCallback(async (): Promise<boolean> => {
+        if (isScanningRef.current || isProcessingRef.current) return false;
 
         try {
             isProcessingRef.current = true;
-            const photo = await photoOutput.capturePhoto(
-                { flashMode: 'off', enableShutterSound: false },
-                {}
-            );
-            if (!photo) {
-                isProcessingRef.current = false;
-                return;
-            }
+            let image: any = null;
 
-            const image = await photo.toImageAsync();
-            photo.dispose?.();
-            if (!image) {
-                isProcessingRef.current = false;
-                return;
-            }
-
-            // Resize ảnh về 480px để jsQR phân tích trong 10ms, không gây đơ ứng dụng
-            const scale = Math.min(480 / image.width, 1);
-            const targetW = Math.max(120, Math.round(image.width * scale));
-            const targetH = Math.max(120, Math.round(image.height * scale));
-            let smallImage: any = null;
-            try {
-                smallImage = image.resize ? image.resize(targetW, targetH) : await image.resizeAsync(targetW, targetH);
-            } catch {
-                smallImage = image;
-            }
-
-            const rawData = smallImage.toRawPixelData ? smallImage.toRawPixelData() : await smallImage.toRawPixelDataAsync();
-            if (smallImage && smallImage !== image) smallImage.dispose?.();
-            image.dispose?.();
-
-            if (rawData && rawData.buffer && rawData.width > 0 && rawData.height > 0) {
-                const dataArray = new Uint8ClampedArray(rawData.buffer);
-                const qrResult = jsQR(dataArray, Math.round(rawData.width), Math.round(rawData.height), {
-                    inversionAttempts: 'attemptBoth',
-                });
-
-                if (qrResult && qrResult.data && qrResult.data.trim().length > 0) {
-                    console.log('🎉 [Checkout VietQR Auto-Scan]:', qrResult.data);
-                    isScanningRef.current = true;
-                    onScanSuccess(qrResult.data.trim());
-                    return;
+            // 1. Snapshot siêu tốc từ TextureView (1-3ms, không khóa sensor)
+            if (cameraRef.current?.takeSnapshot) {
+                try {
+                    image = await cameraRef.current.takeSnapshot();
+                } catch {
+                    image = null;
                 }
             }
-        } catch {
-            // Không làm gián đoạn luồng
+
+            // 2. Dự phòng: Capture photo với timeout 1000ms
+            if (!image && photoOutput?.capturePhoto) {
+                try {
+                    const photo = await Promise.race([
+                        photoOutput.capturePhoto(
+                            { flashMode: 'off', enableShutterSound: false },
+                            {}
+                        ),
+                        new Promise<null>((_, reject) =>
+                            setTimeout(() => reject(new Error('capture timeout')), 1000)
+                        ),
+                    ]);
+                    if (photo) {
+                        image = await photo.toImageAsync();
+                        photo.dispose?.();
+                    }
+                } catch {
+                    image = null;
+                }
+            }
+
+            if (!image) {
+                return false;
+            }
+
+            // Quét đa tầng: Cắt 1:1 tâm khung ngắm -> Toàn ảnh -> Xoay -> Chống lóa
+            const qrResult = await scanNitroImage(image, { cropFactor: 0.72 });
+            image.dispose?.();
+
+            if (qrResult && qrResult.trim().length > 0) {
+                console.log('🎉 [Checkout VietQR Bank-Grade Scanned]:', qrResult);
+                isScanningRef.current = true;
+                onScanSuccess(qrResult.trim());
+                return true;
+            }
+        } catch (e: any) {
+            console.warn('Checkout QR scan warning:', e?.message || e);
         } finally {
             isProcessingRef.current = false;
         }
+
+        return false;
     }, [photoOutput, onScanSuccess]);
 
+    // Chu kỳ quét nhanh liên tục 100ms chuẩn ứng dụng ngân hàng
     useEffect(() => {
-        if (!photoOutput) return;
-        const interval = setInterval(() => {
-            if (!isScanningRef.current) {
-                scanCurrentFrame();
+        let isMounted = true;
+        let timer: any = null;
+
+        const loop = async () => {
+            if (!isMounted || isScanningRef.current) return;
+            try {
+                const found = await scanCurrentFrame();
+                if (found) return;
+            } catch {
+                // Tiếp tục
             }
-        }, 600);
-        return () => clearInterval(interval);
-    }, [photoOutput, scanCurrentFrame]);
+            if (isMounted && !isScanningRef.current) {
+                timer = setTimeout(loop, 100);
+            }
+        };
+
+        timer = setTimeout(loop, 200);
+
+        return () => {
+            isMounted = false;
+            if (timer) clearTimeout(timer);
+        };
+    }, [scanCurrentFrame]);
 
     if (!device) return null;
 
     return (
         <Camera
+            ref={cameraRef}
             style={StyleSheet.absoluteFill}
             device={device}
             isActive={true}
             torch={torchOn ? 'on' : 'off'}
+            enableNativeTapToFocusGesture={true}
+            enableNativeZoomGesture={true}
+            implementationMode="compatible"
             outputs={photoOutput ? [photoOutput] : []}
         />
     );
@@ -511,6 +542,18 @@ const CheckoutScreen = () => {
         setErrorMessage(null);
         hapticLight();
 
+        // ➕ Breadcrumb: rắc vụn bánh mì TRƯỚC khi làm việc nguy hiểm
+        crashlytics().log(`Checkout: bắt đầu đặt hàng, ${items.length} loại sản phẩm`);
+
+        // ➕ Custom Keys: gắn bối cảnh vào MỌI báo cáo phát sinh từ đây trở đi
+        crashlytics().setAttributes({
+            screen: 'CheckoutScreen',
+            cart_item_count: String(items.length),
+            cart_total: String(finalTotal),
+            app_env: APP_ENV,
+            api_base_url: API_BASE_URL, // Cực giá trị: phát hiện ngay App bản Store trỏ nhầm IP LAN
+        });
+
         try {
             // Tính đúng tổng tiền của các sản phẩm theo giá gốc trong giỏ
             const orderItemsTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -523,6 +566,8 @@ const CheckoutScreen = () => {
 
             const backendOrder = response.data;
             const orderId = backendOrder.id || `ORD-${Date.now().toString().slice(-6)}`;
+
+            crashlytics().log(`Checkout: đặt hàng THÀNH CÔNG, orderId = ${orderId}`);
 
             const newOrder = {
                 id: orderId,
@@ -550,16 +595,25 @@ const CheckoutScreen = () => {
             setOrderSuccessData(newOrder);
             setSuccessModalVisible(true);
         } catch (error: any) {
+            const err = error instanceof Error ? error : new Error(error?.message || 'Checkout error');
+
+            // ➕ Ghi nhận Non-Fatal: App không sập, người dùng vẫn thấy thông báo lịch sự,
+            //    nhưng đội kỹ thuật biết ngay có bao nhiêu đơn hàng đang thất bại ngoài đời thực.
+            crashlytics().log(`Checkout: đặt hàng THẤT BẠI - ${err.message}`);
+            crashlytics().recordError(err, 'CheckoutOrderFailed'); // Tham số 2: đặt tên nhóm lỗi cho dễ lọc
+
             const serverMessage = error?.response?.data?.message;
             const message = Array.isArray(serverMessage)
                 ? serverMessage.join(', ')
-                : serverMessage ?? 'Đặt hàng thất bại, vui lòng thử lại';
+                : serverMessage ?? (err.message || 'Đặt hàng thất bại, vui lòng thử lại');
             setErrorMessage(message);
             Alert.alert('Đặt hàng thất bại', message);
         } finally {
             setIsSubmitting(false);
         }
     };
+
+    const handleConfirm = handlePlaceOrder;
 
     const dynamicText = isDarkMode ? '#F8FAFC' : '#0F172A';
     const dynamicSubText = isDarkMode ? '#94A3B8' : '#64748B';

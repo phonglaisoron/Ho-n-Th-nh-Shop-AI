@@ -18,6 +18,7 @@ import {
 import { useIsFocused } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import jsQR from 'jsqr';
+import { scanNitroImage } from '@utils/qrScannerEngine';
 import { COLORS, SIZES } from '@constants/theme';
 import { hapticLight, hapticSuccess } from '@utils/haptics';
 import { parseScannedProductCode, getProductQrUrl } from '@utils/qrHelper';
@@ -35,7 +36,7 @@ try {
     VisionCameraModule = null;
 }
 
-// 1. Component Camera cho iOS (hỗ trợ useObjectOutput quét mã vạch trực tiếp từ phần cứng Apple)
+// 1. Component Camera cho iOS (hỗ trợ useObjectOutput quét mã vạch trực tiếp từ phần cứng Apple ở 60 FPS)
 const IOSCameraView = ({
     navigation,
     visionCamera,
@@ -80,138 +81,14 @@ const IOSCameraView = ({
             device={device}
             isActive={isFocused}
             torch={torchOn ? 'on' : 'off'}
+            enableNativeTapToFocusGesture={true}
+            enableNativeZoomGesture={true}
             outputs={[objectOutput]}
         />
     );
 };
 
-// Cấu hình photoOutput chuẩn 640x480 tốc độ cao
-const ANDROID_PHOTO_CONFIG = {
-    targetResolution: { width: 640, height: 480 },
-    quality: 0.85,
-    qualityPrioritization: 'speed' as const,
-};
-
-// Chuẩn hóa bộ đệm ảnh sang RGBA cho jsQR
-function normalizeToRgba(rawData: any): Uint8ClampedArray {
-    const dataArray = new Uint8ClampedArray(rawData.buffer);
-    if (rawData.pixelFormat === 'BGRA') {
-        const rgba = new Uint8ClampedArray(rawData.buffer.byteLength);
-        for (let i = 0; i < dataArray.length; i += 4) {
-            rgba[i] = dataArray[i + 2];     // R
-            rgba[i + 1] = dataArray[i + 1]; // G
-            rgba[i + 2] = dataArray[i];     // B
-            rgba[i + 3] = dataArray[i + 3]; // A
-        }
-        return rgba;
-    }
-    if (rawData.pixelFormat === 'ARGB') {
-        const rgba = new Uint8ClampedArray(rawData.buffer.byteLength);
-        for (let i = 0; i < dataArray.length; i += 4) {
-            rgba[i] = dataArray[i + 1];     // R
-            rgba[i + 1] = dataArray[i + 2]; // G
-            rgba[i + 2] = dataArray[i + 3]; // B
-            rgba[i + 3] = dataArray[i];     // A
-        }
-        return rgba;
-    }
-    if (rawData.pixelFormat === 'RGB') {
-        const pixelCount = Math.round(rawData.width * rawData.height);
-        const rgba = new Uint8ClampedArray(pixelCount * 4);
-        for (let i = 0, j = 0; i < pixelCount; i++, j += 3) {
-            const target = i * 4;
-            rgba[target] = dataArray[j];
-            rgba[target + 1] = dataArray[j + 1];
-            rgba[target + 2] = dataArray[j + 2];
-            rgba[target + 3] = 255;
-        }
-        return rgba;
-    }
-    return dataArray;
-}
-
-// Thuật toán giải mã QR đa tầng: Chống lóa màn hình điện thoại & webcam mờ
-function decodeQrWithEnhancements(dataArray: Uint8ClampedArray, width: number, height: number): string | null {
-    if (!dataArray || width <= 0 || height <= 0) return null;
-
-    // 1. Quét thông thường (Standard jsQR)
-    try {
-        const res1 = jsQR(dataArray, width, height, { inversionAttempts: 'attemptBoth' });
-        if (res1?.data && res1.data.trim().length > 0) return res1.data.trim();
-    } catch {
-        // bỏ qua nếu lỗi
-    }
-
-    const pixelCount = width * height;
-    if (dataArray.length < pixelCount * 4) return null;
-
-    // Trích xuất độ sáng (Luminance) để xử lý tương phản & lóa
-    let minLum = 255;
-    let maxLum = 0;
-    let sumLum = 0;
-    const lum = new Uint8ClampedArray(pixelCount);
-
-    for (let i = 0, j = 0; i < pixelCount * 4; i += 4, j++) {
-        const l = Math.round((dataArray[i] * 299 + dataArray[i + 1] * 587 + dataArray[i + 2] * 114) / 1000);
-        lum[j] = l;
-        if (l < minLum) minLum = l;
-        if (l > maxLum) maxLum = l;
-        sumLum += l;
-    }
-
-    const avgLum = Math.round(sumLum / pixelCount);
-    const range = maxLum - minLum;
-
-    // 2. Kéo dãn độ tương phản (Contrast Stretching)
-    if (range > 15) {
-        try {
-            const stretched = new Uint8ClampedArray(pixelCount * 4);
-            for (let j = 0, i = 0; j < pixelCount; j++, i += 4) {
-                const val = Math.round(((lum[j] - minLum) * 255) / range);
-                stretched[i] = val;
-                stretched[i + 1] = val;
-                stretched[i + 2] = val;
-                stretched[i + 3] = 255;
-            }
-            const res2 = jsQR(stretched, width, height, { inversionAttempts: 'attemptBoth' });
-            if (res2?.data && res2.data.trim().length > 0) return res2.data.trim();
-        } catch {
-            // bỏ qua
-        }
-    }
-
-    // 3. Phân ngưỡng nhị phân đa tầng (Multi-level Adaptive Binary Thresholding)
-    // Tối ưu đặc biệt khi quét màn hình điện thoại phát sáng hoặc bị chói webcam
-    const thresholds = [
-        avgLum,
-        Math.round((minLum + maxLum) / 2),
-        165, // Chống lóa màn hình sáng (Highlight threshold)
-        195, // Màn hình cực sáng (Overexposed phone screen)
-        95,  // Ánh sáng tối (Shadow threshold)
-    ];
-
-    const binarized = new Uint8ClampedArray(pixelCount * 4);
-    for (const th of thresholds) {
-        if (th <= 10 || th >= 245) continue;
-        try {
-            for (let j = 0, i = 0; j < pixelCount; j++, i += 4) {
-                const val = lum[j] > th ? 255 : 0;
-                binarized[i] = val;
-                binarized[i + 1] = val;
-                binarized[i + 2] = val;
-                binarized[i + 3] = 255;
-            }
-            const resTh = jsQR(binarized, width, height, { inversionAttempts: 'attemptBoth' });
-            if (resTh?.data && resTh.data.trim().length > 0) return resTh.data.trim();
-        } catch {
-            // bỏ qua
-        }
-    }
-
-    return null;
-}
-
-// 1.1 Component Camera cho Android (Xử lý chu kỳ quét an toàn, tránh tràn bộ đệm Camera2)
+// 1.1 Component Camera cho Android (Quét đa tầng chuẩn ngân hàng: Tự động lấy nét, 120ms cycle, chống lóa)
 const AndroidCameraView = ({
     visionCamera,
     torchOn,
@@ -230,11 +107,18 @@ const AndroidCameraView = ({
     onScanningStateChange?: (scanning: boolean) => void;
 }) => {
     const { Camera, usePhotoOutput } = visionCamera;
+    const cameraRef = useRef<any>(null);
     const isScanningRef = useRef(false);
     const isProcessingRef = useRef(false);
 
+    const photoConfig = React.useMemo(() => ({
+        targetResolution: { width: 1280, height: 960 },
+        quality: 0.85,
+        qualityPrioritization: 'balanced' as const,
+    }), []);
+
     const photoOutput = usePhotoOutput
-        ? usePhotoOutput(ANDROID_PHOTO_CONFIG)
+        ? usePhotoOutput(photoConfig)
         : null;
 
     // Tự động mở lại khả năng quét khi màn hình được focus
@@ -245,7 +129,7 @@ const AndroidCameraView = ({
     }, [isFocused]);
 
     const scanCurrentFrame = useCallback(async (isManualTrigger = false): Promise<boolean> => {
-        if (!photoOutput || !isFocused || isScanningRef.current || isProcessingRef.current) {
+        if (!isFocused || isScanningRef.current || isProcessingRef.current) {
             return false;
         }
 
@@ -255,115 +139,61 @@ const AndroidCameraView = ({
                 onScanningStateChange?.(true);
             }
 
-            const photo = await photoOutput.capturePhoto(
-                {
-                    flashMode: 'off',
-                    enableShutterSound: false,
-                },
-                {}
-            );
+            const startTime = Date.now();
+            let image: any = null;
 
-            if (!photo) {
-                isProcessingRef.current = false;
-                onScanningStateChange?.(false);
-                return false;
-            }
-
-            const fullImage = await photo.toImageAsync();
-            photo.dispose?.();
-            if (!fullImage) {
-                isProcessingRef.current = false;
-                onScanningStateChange?.(false);
-                return false;
-            }
-
-            // 1. Cắt vùng trung tâm (ROI 75%) để tập trung vào mã QR bên trong khung ngắm
-            const cropW = Math.round(fullImage.width * 0.75);
-            const cropH = Math.round(fullImage.height * 0.75);
-            const startX = Math.round((fullImage.width - cropW) / 2);
-            const startY = Math.round((fullImage.height - cropH) / 2);
-            const endX = startX + cropW;
-            const endY = startY + cropH;
-
-            let scanImage: any = null;
-            try {
-                scanImage = fullImage.crop(startX, startY, endX, endY);
-            } catch {
-                scanImage = fullImage;
-            }
-
-            // 2. RESIZE VỀ ĐỘ PHÂN GIẢI CHUẨN 480px ĐỂ jsQR CHẠY SIÊU TỐC (<15ms), KHÔNG LÀM ĐƠ MÁY
-            const TARGET_WIDTH = 480;
-            const scale = Math.min(TARGET_WIDTH / scanImage.width, 1);
-            const targetW = Math.max(120, Math.round(scanImage.width * scale));
-            const targetH = Math.max(120, Math.round(scanImage.height * scale));
-
-            let smallImage: any = null;
-            try {
-                smallImage = scanImage.resize ? scanImage.resize(targetW, targetH) : await scanImage.resizeAsync(targetW, targetH);
-            } catch {
-                smallImage = scanImage;
-            }
-
-            // Bước 1: Quét trên ảnh cắt trung tâm đã resize
-            let decoded: string | null = null;
-            try {
-                const rawCropped = smallImage.toRawPixelData ? smallImage.toRawPixelData() : await smallImage.toRawPixelDataAsync();
-                if (rawCropped && rawCropped.buffer) {
-                    const dataArray = normalizeToRgba(rawCropped);
-                    decoded = decodeQrWithEnhancements(dataArray, Math.round(rawCropped.width), Math.round(rawCropped.height));
-                }
-            } catch (e) {
-                console.warn('Cropped scan failed:', e);
-            }
-
-            // Bước 2: Nếu ảnh cắt chưa thấy, quét tiếp trên ảnh toàn khung hình (cũng resize về 480px để giữ hiệu năng siêu mượt)
-            if (!decoded && scanImage !== fullImage) {
+            // 1. Ưu tiên hàng đầu: Chụp snapshot trực tiếp từ Preview TextureView (1-3ms, không khóa AE/AF phần cứng)
+            if (cameraRef.current?.takeSnapshot) {
                 try {
-                    const fullScale = Math.min(TARGET_WIDTH / fullImage.width, 1);
-                    const fullW = Math.max(120, Math.round(fullImage.width * fullScale));
-                    const fullH = Math.max(120, Math.round(fullImage.height * fullScale));
-
-                    let smallFull: any = null;
-                    try {
-                        smallFull = fullImage.resize ? fullImage.resize(fullW, fullH) : await fullImage.resizeAsync(fullW, fullH);
-                    } catch {
-                        smallFull = fullImage;
-                    }
-
-                    const rawFull = smallFull.toRawPixelData ? smallFull.toRawPixelData() : await smallFull.toRawPixelDataAsync();
-                    if (rawFull && rawFull.buffer) {
-                        const dataArray = normalizeToRgba(rawFull);
-                        decoded = decodeQrWithEnhancements(dataArray, Math.round(rawFull.width), Math.round(rawFull.height));
-                    }
-                    if (smallFull && smallFull !== fullImage) {
-                        smallFull.dispose?.();
-                    }
-                } catch (e) {
-                    console.warn('Full image scan failed:', e);
+                    image = await cameraRef.current.takeSnapshot();
+                } catch {
+                    image = null;
                 }
             }
 
-            if (smallImage && smallImage !== scanImage) {
-                smallImage.dispose?.();
+            // 2. Dự phòng: Capture photo với timeout 1000ms để không bao giờ bị nghẽn camera
+            if (!image && photoOutput?.capturePhoto) {
+                try {
+                    const photo = await Promise.race([
+                        photoOutput.capturePhoto(
+                            { flashMode: 'off', enableShutterSound: false },
+                            {}
+                        ),
+                        new Promise<null>((_, reject) =>
+                            setTimeout(() => reject(new Error('capture timeout')), 1000)
+                        ),
+                    ]);
+                    if (photo) {
+                        image = await photo.toImageAsync();
+                        photo.dispose?.();
+                    }
+                } catch {
+                    image = null;
+                }
             }
-            if (scanImage && scanImage !== fullImage) {
-                scanImage.dispose?.();
+
+            if (!image) {
+                return false;
             }
-            fullImage.dispose?.();
+
+            // Quét đa tầng chuẩn ngân hàng: Cắt 1:1 tâm khung ngắm -> Toàn ảnh -> Xoay -> Chống lóa
+            const decoded = await scanNitroImage(image, { cropFactor: 0.72 });
+            image.dispose?.();
+            const duration = Date.now() - startTime;
 
             if (decoded) {
-                console.log('🎉 [ShopAI QR Auto-Scan Success]:', decoded);
+                console.log(`🎉 [ShopAI Bank-Grade QR Scanned in ${duration}ms]:`, decoded);
                 isScanningRef.current = true;
                 onScanSuccess(decoded);
-                onScanningStateChange?.(false);
                 return true;
             }
         } catch (err: any) {
-            console.warn('⚠️ [Camera Scan Warning]:', err?.message || err);
+            console.warn('⚠️ [Camera Scan Error]:', err?.message || err);
         } finally {
             isProcessingRef.current = false;
-            onScanningStateChange?.(false);
+            if (isManualTrigger) {
+                onScanningStateChange?.(false);
+            }
         }
 
         return false;
@@ -379,9 +209,9 @@ const AndroidCameraView = ({
         };
     }, [triggerScanRef, scanCurrentFrame]);
 
-    // Chu kỳ quét tự động an toàn (Sequential loop - chống nghẽn camera)
+    // Chu kỳ quét tự động siêu mượt 100ms (tức thì như app ngân hàng khi lướt qua mã)
     useEffect(() => {
-        if (!isFocused || !photoOutput) return;
+        if (!isFocused) return;
 
         let isMounted = true;
         let timer: any = null;
@@ -389,30 +219,35 @@ const AndroidCameraView = ({
         const loop = async () => {
             if (!isMounted || !isFocused || isScanningRef.current) return;
             try {
-                await scanCurrentFrame(false);
+                const found = await scanCurrentFrame(false);
+                if (found) return;
             } catch (e) {
-                console.warn('Scan frame error:', e);
+                // Tiếp tục quét
             }
             if (isMounted && isFocused && !isScanningRef.current) {
-                timer = setTimeout(loop, 800);
+                timer = setTimeout(loop, 100);
             }
         };
 
-        // Bắt đầu chu kỳ quét đầu tiên sau 600ms
-        timer = setTimeout(loop, 600);
+        // Bắt đầu quét ngay sau 150ms khi camera sẵn sàng
+        timer = setTimeout(loop, 150);
 
         return () => {
             isMounted = false;
             if (timer) clearTimeout(timer);
         };
-    }, [isFocused, photoOutput, scanCurrentFrame]);
+    }, [isFocused, scanCurrentFrame]);
 
     return (
         <Camera
+            ref={cameraRef}
             style={StyleSheet.absoluteFill}
             device={device}
             isActive={isFocused}
             torch={torchOn ? 'on' : 'off'}
+            enableNativeTapToFocusGesture={true}
+            enableNativeZoomGesture={true}
+            implementationMode="compatible"
             outputs={photoOutput ? [photoOutput] : []}
         />
     );
@@ -441,6 +276,15 @@ const RealCameraView = ({
     const device = backDevice || frontDevice;
     const isFocused = useIsFocused();
 
+    console.log('📷 [RealCameraView]', {
+        backDevice: !!backDevice,
+        frontDevice: !!frontDevice,
+        device: device ? `${device.position} (${device.id})` : null,
+        hasPermission,
+        status,
+        isFocused,
+    });
+
     useEffect(() => {
         if (!hasPermission && status === 'not-determined') {
             requestPermission();
@@ -448,6 +292,7 @@ const RealCameraView = ({
     }, [hasPermission, status, requestPermission]);
 
     if (device == null || !hasPermission) {
+        console.log('⚠️ [RealCameraView] Early return null because:', { noDevice: device == null, noPerm: !hasPermission });
         return null;
     }
 
@@ -488,7 +333,7 @@ const SAMPLE_QUICK_PRODUCTS = [
 export const ScannerScreen = ({ navigation }: any) => {
     const [torchOn, setTorchOn] = useState(false);
     const [manualCode, setManualCode] = useState('');
-    const [hasAndroidPermission, setHasAndroidPermission] = useState(false);
+    const [hasAndroidPermission, setHasAndroidPermission] = useState(true);
     const [isScanningActive, setIsScanningActive] = useState(true);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [showSampleModal, setShowSampleModal] = useState(false);
@@ -820,6 +665,27 @@ export const ScannerScreen = ({ navigation }: any) => {
                         </Text>
 
                         <View style={{ gap: 10, marginTop: 10 }}>
+                            {/* Mã VietQR Ngân Hàng mẫu */}
+                            <TouchableOpacity
+                                style={[styles.sampleItemRow, { borderColor: '#10B981', borderWidth: 1 }]}
+                                onPress={() => {
+                                    setShowSampleModal(false);
+                                    onScanSuccess('00020101021238580010A00000072701280006970436011410390951650208QRIBFTTA52045999530370454061000005802VN62160812DH171243162663047D32');
+                                }}
+                            >
+                                <View style={[styles.sampleThumb, { backgroundColor: '#006838', alignItems: 'center', justifyContent: 'center' }]}>
+                                    <Icon name="bank" size={24} color="#FFF" />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.sampleItemName} numberOfLines={1}>VietQR Vietcombank (Thanh toán)</Text>
+                                    <Text style={styles.sampleItemSku}>Mã chuẩn EMVCo Ngân hàng</Text>
+                                </View>
+                                <View style={[styles.sampleScanBtnBadge, { backgroundColor: 'rgba(16, 185, 129, 0.2)' }]}>
+                                    <Icon name="qrcode-scan" size={16} color="#10B981" />
+                                    <Text style={[styles.sampleScanBtnText, { color: '#10B981' }]}>Quét VietQR</Text>
+                                </View>
+                            </TouchableOpacity>
+
                             {MOCK_PRODUCTS.slice(0, 5).map((p) => (
                                 <TouchableOpacity
                                     key={p.id}

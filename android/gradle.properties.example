@@ -1,0 +1,15 @@
+# Project-wide Gradle settings template
+org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m
+android.useAndroidX=true
+reactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64
+newArchEnabled=true
+hermesEnabled=true
+edgeToEdgeEnabled=true
+android.builtInKotlin=false
+android.newDsl=false
+
+# Cấu hình Keystore ký số bản Release (Khai báo trong android/gradle.properties cá nhân)
+# MYAPP_RELEASE_STORE_FILE=shopai-release.keystore
+# MYAPP_RELEASE_KEY_ALIAS=shopai-key-alias
+# MYAPP_RELEASE_STORE_PASSWORD=your_keystore_password
+# MYAPP_RELEASE_KEY_PASSWORD=your_key_password

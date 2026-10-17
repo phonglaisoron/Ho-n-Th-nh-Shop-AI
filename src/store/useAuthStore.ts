@@ -26,7 +26,7 @@ const DEFAULT_ADDRESSES: AddressItem[] = [
     {
         id: 'addr_1',
         title: '🏠 Nhà riêng',
-        receiver: 'Phong Nguyễn',
+        receiver: 'Phong Lài',
         phone: '0987 654 321',
         detail: '123 Đường Nguyễn Trãi, Phường 2, Quận 5, TP. Hồ Chí Minh',
         isDefault: true,

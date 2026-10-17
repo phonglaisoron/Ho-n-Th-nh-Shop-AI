@@ -17,6 +17,7 @@ import { useCartStore } from '@store/useCartStore';
 import { useTheme } from '@contexts/ThemeContext';
 import { MOCK_PRODUCTS } from '@data/mockProducts';
 import { API_BASE_URL } from '@constants/api';
+import { getCrashlytics as crashlytics } from '@react-native-firebase/crashlytics';
 import { Product, ProductListSchema } from '../types/product.schema';
 import { parseScannedProductCode } from '@utils/qrHelper';
 import type { HomeStackParamList } from '@navigation/HomeStackNavigator';
@@ -54,20 +55,26 @@ class NetworkError extends Error { }
 const API_URL = `${API_BASE_URL}/api/products`;
 
 const fetchProductsAPI = async (): Promise<Product[]> => {
-    const response = await fetch(API_URL);
-    if (!response.ok) {
-        throw new NetworkError('Lỗi mạng từ Server NestJS');
-    }
-    const rawData = await response.json(); // Dữ liệu thô — chưa hề được tin tưởng
+    try {
+        const response = await fetch(API_URL);
+        if (!response.ok) {
+            throw new NetworkError('Lỗi mạng từ Server NestJS');
+        }
+        const rawData = await response.json(); // Dữ liệu thô — chưa hề được tin tưởng
 
-    // TRẠM KIỂM SOÁT ZOD: không vì Server là "hàng nhà mình" mà bỏ qua bước kiểm duyệt này
-    const result = ProductListSchema.safeParse(rawData);
-    if (!result.success) {
-        console.error('❌ Zod chặn dữ liệu bẩn từ Server NestJS:', result.error.format());
-        throw new ZodValidationError('Dữ liệu sản phẩm từ Server không hợp lệ (Zod validation failed)!');
-    }
+        // TRẠM KIỂM SOÁT ZOD: không vì Server là "hàng nhà mình" mà bỏ qua bước kiểm duyệt này
+        const result = ProductListSchema.safeParse(rawData);
+        if (!result.success) {
+            console.error('❌ Zod chặn dữ liệu bẩn từ Server NestJS:', result.error.format());
+            throw new ZodValidationError('Dữ liệu sản phẩm từ Server không hợp lệ (Zod validation failed)!');
+        }
 
-    return result.data;
+        return result.data;
+    } catch (error) {
+        // ➕ MỚI: Ghi lại lỗi Non-Fatal — App KHÔNG sập, nhưng Firebase vẫn nhận được báo cáo
+        crashlytics().recordError(error as Error, 'ProductFetchFailed');
+        throw error; // Ném lại để React Query biết Query lỗi (isError = true), UI vẫn hiển thị thông báo cho user
+    }
 };
 
 const fetchProductsPage = async ({ pageParam }: { pageParam: number }): Promise<ProductPage> => {
@@ -84,6 +91,13 @@ const HomeScreen = ({ navigation, route }: Props) => {
     const totalQuantity = useCartStore(state => state.totalQuantity());
     const { isDarkMode, toggleTheme } = useTheme();
     const [selectedCategory, setSelectedCategory] = useState('all');
+    const [isServerOnline, setIsServerOnline] = useState<boolean | null>(null);
+
+    useEffect(() => {
+        fetch(`${API_BASE_URL}/api/health`) // Dùng đúng API_BASE_URL — nguồn sự thật duy nhất cho IP LAN
+            .then((res) => setIsServerOnline(res.ok))
+            .catch(() => setIsServerOnline(false));
+    }, []);
 
     const dynamicText = isDarkMode ? '#F8FAFC' : '#0F172A';
 
@@ -180,6 +194,15 @@ const HomeScreen = ({ navigation, route }: Props) => {
                                         <Text style={[styles.headerTitle, { color: dynamicText }]}>
                                             Shop<Text style={{ color: COSMIC_THEME.neonCyan }}>AI</Text>
                                         </Text>
+                                        <View
+                                            style={{
+                                                width: 10,
+                                                height: 10,
+                                                borderRadius: 5,
+                                                backgroundColor: isServerOnline ? '#4CD964' : '#FF3B30', // Xanh = Online, Đỏ = Offline/sai IP
+                                                marginLeft: 6,
+                                            }}
+                                        />
                                         <View style={styles.stationBadge}>
                                             <Text style={styles.stationText}>CHÍNH HÃNG</Text>
                                         </View>
@@ -461,6 +484,21 @@ const HomeScreen = ({ navigation, route }: Props) => {
                                 ) : null
                             }
                         />
+                    )}
+
+                    {__DEV__ && (
+                        <Pressable
+                            onLongPress={() => {
+                                crashlytics().log('Dev nhấn giữ vào version text để test crash...');
+                                crashlytics().setUserId('dev_tester_999');
+                                crashlytics().crash(); // Chỉ chạy được vì __DEV__ === true
+                            }}
+                            style={{ padding: 8 }}
+                        >
+                            <Text style={{ textAlign: 'center', fontSize: 10, color: '#ccc' }}>
+                                ShopAI v1.0.0 (Dev: nhấn giữ 2s để test Crashlytics)
+                            </Text>
+                        </Pressable>
                     )}
                 </View>
             </SafeAreaView>

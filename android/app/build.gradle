@@ -1,6 +1,8 @@
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
+apply plugin: 'com.google.gms.google-services'
+apply plugin: 'com.google.firebase.crashlytics'
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -72,6 +74,10 @@ def enableProguardInReleaseBuilds = false
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+def versionMajor = 1
+def versionMinor = 0
+def versionPatch = 0
+
 android {
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
@@ -82,8 +88,9 @@ android {
         applicationId "com.shopai"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // Áp dụng công thức versioning ở Phần 10.10 — không bao giờ phải tự tăng tay nữa
+        versionName "${versionMajor}.${versionMinor}.${versionPatch}"
+        versionCode versionMajor * 10000 + versionMinor * 100 + versionPatch
     }
     signingConfigs {
         debug {
@@ -92,18 +99,39 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            if (project.hasProperty('MYAPP_RELEASE_STORE_FILE')) {
+                storeFile file(MYAPP_RELEASE_STORE_FILE)
+                storePassword MYAPP_RELEASE_STORE_PASSWORD
+                keyAlias MYAPP_RELEASE_KEY_ALIAS
+                keyPassword MYAPP_RELEASE_KEY_PASSWORD
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            // Tắt Crashlytics ở bản Debug: tránh làm nhiễu Dashboard bằng những lần
+            // crash cố ý lúc đang code. Đồng bộ với cờ ENABLE_CRASHLYTICS ở Bước 0.
+            firebaseCrashlytics {
+                mappingFileUploadEnabled false
+            }
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
-            minifyEnabled enableProguardInReleaseBuilds
-            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            signingConfig signingConfigs.release  // Mặc định RN để signingConfigs.debug — PHẢI đổi
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+
+            firebaseCrashlytics {
+                mappingFileUploadEnabled true   // Tự upload mapping.txt mỗi lần build release
+                nativeSymbolUploadEnabled false // Chỉ cần true khi App có thư viện C++ (.so) riêng
+            }
         }
+    }
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
     }
 }
 
